@@ -2,6 +2,73 @@ runAfterLoad(function () {
 
   console.log("🔥 Wildfire mod loading...");
 
+  // Only ever creates a pixel into truly empty space. Prevents:
+  // (a) accidentally overwriting/destroying an existing pixel
+  //     (like wood or fire) that happens to already be there
+  // (b) errors from trying to create outside the grid
+  function safeCreatePixel(id, x, y) {
+    if (x < 0 || y < 0 || x >= width || y >= height) return false;
+    if (pixelExists(x, y)) return false;
+    createPixel(id, x, y);
+    return true;
+  }
+
+  // Searches a small area around a target point for the nearest empty
+  // spot and creates there instead - used so firefighting elements
+  // spray water/retardant NEXT TO fire rather than trying (and failing)
+  // to spray directly on top of it, since the fire pixel itself isn't
+  // empty space.
+  function sprayNear(id, x, y, radius) {
+    for (let r = 0; r <= radius; r++) {
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dy = -r; dy <= r; dy++) {
+          if (safeCreatePixel(id, x + dx, y + dy)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // Scans outward from (px,py) for the nearest pixel of element `id`
+  // within `radius`. Steps by 2 to keep the search affordable at
+  // large radii. Returns {x,y} or null if nothing found.
+  function findNearestElement(px, py, id, radius) {
+    let best = null;
+    let bestDist = Infinity;
+    for (let x = -radius; x <= radius; x += 2) {
+      for (let y = -radius; y <= radius; y += 2) {
+        let tx = px + x;
+        let ty = py + y;
+        if (pixelExists(tx, ty) && getPixel(tx, ty).element === id) {
+          let d = x * x + y * y;
+          if (d < bestDist) {
+            bestDist = d;
+            best = { x: tx, y: ty };
+          }
+        }
+      }
+    }
+    return best;
+  }
+
+  // Moves pixel.x/pixel.y toward (tx,ty) by up to `speed` per axis,
+  // per tick - used so vehicles glide smoothly toward a target
+  // instead of teleporting.
+  function stepToward(pixel, tx, ty, speed) {
+    let dx = tx - pixel.x;
+    let dy = ty - pixel.y;
+    if (Math.abs(dx) > speed) {
+      pixel.x += Math.sign(dx) * speed;
+    } else {
+      pixel.x = tx;
+    }
+    if (Math.abs(dy) > speed) {
+      pixel.y += Math.sign(dy) * speed;
+    } else {
+      pixel.y = ty;
+    }
+  }
+
   // ---------- Liquids ----------
 
   elements.hose_water = {
@@ -129,7 +196,7 @@ runAfterLoad(function () {
           pixel.x += dir;
         }
         if (Math.random() < 0.5) {
-          createPixel("hose_water", pixel.x + dir, pixel.y);
+          sprayNear("hose_water", pixel.x + dir, pixel.y, 2);
         }
       }
     },
@@ -187,7 +254,7 @@ runAfterLoad(function () {
           if (pixelExists(pixel.x + x, pixel.y + y)) {
             let p = getPixel(pixel.x + x, pixel.y + y);
             if (p.element === "fire" && Math.random() < 0.3) {
-              createPixel("fire_foam", pixel.x + x, pixel.y + y);
+              sprayNear("fire_foam", pixel.x + x, pixel.y + y, 1);
             }
           }
         }
@@ -218,7 +285,7 @@ runAfterLoad(function () {
         }
       }
       if (found && Math.random() < 0.5) {
-        createPixel("hose_water", pixel.x + 2, pixel.y - 1);
+        sprayNear("hose_water", pixel.x + 2, pixel.y - 1, 2);
       }
     },
   };
@@ -236,7 +303,7 @@ runAfterLoad(function () {
           if (pixelExists(pixel.x + x, pixel.y + y)) {
             if (getPixel(pixel.x + x, pixel.y + y).element === "fire") {
               for (let i = 0; i < 4; i++) {
-                createPixel(
+                safeCreatePixel(
                   "hose_water",
                   pixel.x + Math.floor(Math.random() * 5) - 2,
                   pixel.y + 1
@@ -255,27 +322,65 @@ runAfterLoad(function () {
     behavior: behaviors.WALL,
     category: "machines",
     state: "solid",
-    desc: "Flies over fire and drops water.",
+    desc: "Flies to fire, drops water, returns to refill, repeats. Flies off when the fire is out.",
     tick: function (pixel) {
-      if (!pixel.dir) pixel.dir = 1;
-      pixel.x += pixel.dir;
-      if (pixel.x <= 2 || pixel.x >= width - 2) pixel.dir *= -1;
-      let found = false;
-      for (let y = pixel.y + 1; y < height; y++) {
-        if (pixelExists(pixel.x, y)) {
-          if (getPixel(pixel.x, y).element === "fire") {
-            found = true;
-            break;
+      if (!pixel.state) pixel.state = "seeking_fire";
+      if (pixel.tank === undefined) pixel.tank = 20;
+
+      if (pixel.state === "seeking_fire") {
+        if (!pixel.targetX || pixel.retarget) {
+          let t = findNearestElement(pixel.x, pixel.y, "fire", 70);
+          pixel.retarget = false;
+          if (!t) {
+            pixel.state = "leaving";
+            return;
           }
+          pixel.targetX = t.x;
+          pixel.targetY = t.y - 3;
         }
-      }
-      if (found && Math.random() < 0.3) {
-        for (let i = 0; i < 15; i++) {
-          createPixel(
-            "hose_water",
-            pixel.x + Math.floor(Math.random() * 7) - 3,
-            pixel.y + 2
-          );
+        stepToward(pixel, pixel.targetX, pixel.targetY, 2);
+        if (pixel.x === pixel.targetX && pixel.y === pixel.targetY) {
+          pixel.state = "dropping";
+          pixel.targetX = null;
+        }
+      } else if (pixel.state === "dropping") {
+        if (pixel.tank > 0) {
+          sprayNear("hose_water", pixel.x, pixel.y + 2, 3);
+          pixel.tank--;
+        } else {
+          pixel.state = "seeking_water";
+        }
+      } else if (pixel.state === "seeking_water") {
+        if (!pixel.targetX) {
+          let t = findNearestElement(pixel.x, pixel.y, "water", 90);
+          if (!t) {
+            // no water source anywhere nearby - refill anyway so it
+            // isn't stranded forever
+            pixel.tank = 20;
+            pixel.state = "seeking_fire";
+            pixel.retarget = true;
+            return;
+          }
+          pixel.targetX = t.x;
+          pixel.targetY = t.y - 3;
+        }
+        stepToward(pixel, pixel.targetX, pixel.targetY, 2);
+        if (pixel.x === pixel.targetX && pixel.y === pixel.targetY) {
+          pixel.state = "refilling";
+          pixel.refillTimer = 15;
+          pixel.targetX = null;
+        }
+      } else if (pixel.state === "refilling") {
+        pixel.refillTimer--;
+        if (pixel.refillTimer <= 0) {
+          pixel.tank = 20;
+          pixel.state = "seeking_fire";
+          pixel.retarget = true;
+        }
+      } else if (pixel.state === "leaving") {
+        pixel.y -= 2;
+        if (pixel.y <= 1) {
+          deletePixel(pixel.x, pixel.y);
         }
       }
     },
@@ -287,27 +392,63 @@ runAfterLoad(function () {
     behavior: behaviors.WALL,
     category: "machines",
     state: "solid",
-    desc: "Drops water on fires from above.",
+    desc: "Flies to fire, drops water, returns to refill, repeats. Flies off when the fire is out.",
     tick: function (pixel) {
-      if (!pixel.dir) pixel.dir = 1;
-      pixel.x += pixel.dir;
-      if (pixel.x <= 2 || pixel.x >= width - 2) pixel.dir *= -1;
-      let found = false;
-      for (let y = pixel.y; y < height; y++) {
-        if (pixelExists(pixel.x, y)) {
-          if (getPixel(pixel.x, y).element === "fire") {
-            found = true;
-            break;
+      if (!pixel.state) pixel.state = "seeking_fire";
+      if (pixel.tank === undefined) pixel.tank = 25;
+
+      if (pixel.state === "seeking_fire") {
+        if (!pixel.targetX || pixel.retarget) {
+          let t = findNearestElement(pixel.x, pixel.y, "fire", 90);
+          pixel.retarget = false;
+          if (!t) {
+            pixel.state = "leaving";
+            return;
           }
+          pixel.targetX = t.x;
+          pixel.targetY = t.y - 4;
         }
-      }
-      if (found && Math.random() < 0.2) {
-        for (let i = 0; i < 25; i++) {
-          createPixel(
-            "hose_water",
-            pixel.x + Math.floor(Math.random() * 15) - 7,
-            pixel.y + 2
-          );
+        stepToward(pixel, pixel.targetX, pixel.targetY, 3);
+        if (pixel.x === pixel.targetX && pixel.y === pixel.targetY) {
+          pixel.state = "dropping";
+          pixel.targetX = null;
+        }
+      } else if (pixel.state === "dropping") {
+        if (pixel.tank > 0) {
+          sprayNear("hose_water", pixel.x, pixel.y + 2, 3);
+          pixel.tank--;
+        } else {
+          pixel.state = "seeking_water";
+        }
+      } else if (pixel.state === "seeking_water") {
+        if (!pixel.targetX) {
+          let t = findNearestElement(pixel.x, pixel.y, "water", 110);
+          if (!t) {
+            pixel.tank = 25;
+            pixel.state = "seeking_fire";
+            pixel.retarget = true;
+            return;
+          }
+          pixel.targetX = t.x;
+          pixel.targetY = t.y - 4;
+        }
+        stepToward(pixel, pixel.targetX, pixel.targetY, 3);
+        if (pixel.x === pixel.targetX && pixel.y === pixel.targetY) {
+          pixel.state = "refilling";
+          pixel.refillTimer = 15;
+          pixel.targetX = null;
+        }
+      } else if (pixel.state === "refilling") {
+        pixel.refillTimer--;
+        if (pixel.refillTimer <= 0) {
+          pixel.tank = 25;
+          pixel.state = "seeking_fire";
+          pixel.retarget = true;
+        }
+      } else if (pixel.state === "leaving") {
+        pixel.y -= 2;
+        if (pixel.y <= 1) {
+          deletePixel(pixel.x, pixel.y);
         }
       }
     },
@@ -319,27 +460,33 @@ runAfterLoad(function () {
     behavior: behaviors.WALL,
     category: "machines",
     state: "solid",
-    desc: "Drops fire retardant on fires from above.",
+    desc: "Flies to fire and drops retardant. Never runs out, stays on the map.",
     tick: function (pixel) {
-      if (!pixel.dir) pixel.dir = 1;
-      pixel.x += pixel.dir;
-      if (pixel.x <= 2 || pixel.x >= width - 2) pixel.dir *= -1;
-      let found = false;
-      for (let y = pixel.y; y < height; y++) {
-        if (pixelExists(pixel.x, y)) {
-          if (getPixel(pixel.x, y).element === "fire") {
-            found = true;
-            break;
+      if (!pixel.state) pixel.state = "seeking_fire";
+
+      if (pixel.state === "seeking_fire") {
+        if (!pixel.targetX || pixel.retarget) {
+          let t = findNearestElement(pixel.x, pixel.y, "fire", 90);
+          pixel.retarget = false;
+          if (!t) {
+            // no fire right now - hover in place and keep checking
+            return;
           }
+          pixel.targetX = t.x;
+          pixel.targetY = t.y - 4;
         }
-      }
-      if (found && Math.random() < 0.2) {
-        for (let i = 0; i < 20; i++) {
-          createPixel(
-            "red_retardant",
-            pixel.x + Math.floor(Math.random() * 13) - 6,
-            pixel.y + 2
-          );
+        stepToward(pixel, pixel.targetX, pixel.targetY, 3);
+        if (pixel.x === pixel.targetX && pixel.y === pixel.targetY) {
+          pixel.state = "dropping";
+          pixel.dropTimer = 20;
+          pixel.targetX = null;
+        }
+      } else if (pixel.state === "dropping") {
+        sprayNear("red_retardant", pixel.x, pixel.y + 2, 3);
+        pixel.dropTimer--;
+        if (pixel.dropTimer <= 0) {
+          pixel.state = "seeking_fire";
+          pixel.retarget = true;
         }
       }
     },
@@ -380,7 +527,7 @@ runAfterLoad(function () {
       }
 
       if (Math.random() < 0.4) {
-        createPixel("smoke", pixel.x, pixel.y - 1);
+        safeCreatePixel("smoke", pixel.x, pixel.y - 1);
       }
 
       if (pixel.intensity > 50 && Math.random() < 0.05) {
@@ -388,12 +535,12 @@ runAfterLoad(function () {
         let ey = pixel.y - Math.floor(Math.random() * 5);
         if (pixelExists(ex, ey)) {
           if (getPixel(ex, ey).element === "grass") {
-            createPixel("fire", ex, ey);
+            getPixel(ex, ey).element = "fire";
           }
         }
       }
 
-      if (baseFireTick) baseFireTick(pixel);
+      if (baseFireTick) baseFireTick.call(elements.fire, pixel);
     };
   }
 
@@ -423,7 +570,7 @@ runAfterLoad(function () {
           pixel.element = "dust";
           return;
         }
-        if (baseTick) baseTick(pixel);
+        if (baseTick) baseTick.call(elements[mat], pixel);
       };
     }
   });
@@ -454,7 +601,7 @@ runAfterLoad(function () {
           pixel.x += dir;
         }
       }
-      if (baseWaterTick) baseWaterTick(pixel);
+      if (baseWaterTick) baseWaterTick.call(elements.water, pixel);
     };
   }
 
@@ -512,7 +659,7 @@ runAfterLoad(function () {
         }
       }
 
-      if (baseTick) baseTick(pixel);
+      if (baseTick) baseTick.call(elements[id], pixel);
     };
   }
 
@@ -536,14 +683,14 @@ runAfterLoad(function () {
       if (!pixel.fired) {
         pixel.fired = true;
         for (let x = -5; x <= 5; x++) {
-          createPixel("fire", pixel.x + x, pixel.y - 1);
+          safeCreatePixel("fire", pixel.x + x, pixel.y - 1);
         }
-        createPixel("firefighter", pixel.x + 6, pixel.y);
-        createPixel("wildland_firefighter", pixel.x - 6, pixel.y);
-        createPixel("fire_truck", pixel.x, pixel.y);
-        createPixel("firefighting_helicopter", pixel.x, pixel.y - 20);
-        createPixel("water_tanker_plane", pixel.x + 15, pixel.y - 25);
-        createPixel("red_retardant_tanker", pixel.x - 15, pixel.y - 25);
+        safeCreatePixel("firefighter", pixel.x + 6, pixel.y);
+        safeCreatePixel("wildland_firefighter", pixel.x - 6, pixel.y);
+        safeCreatePixel("fire_truck", pixel.x, pixel.y);
+        safeCreatePixel("firefighting_helicopter", pixel.x, pixel.y - 20);
+        safeCreatePixel("water_tanker_plane", pixel.x + 15, pixel.y - 25);
+        safeCreatePixel("red_retardant_tanker", pixel.x - 15, pixel.y - 25);
       }
     },
   };
