@@ -499,47 +499,53 @@ runAfterLoad(function () {
   if (elements.fire) {
     let baseFireTick = elements.fire.tick;
     elements.fire.tick = function (pixel) {
-      if (!pixel.intensity) pixel.intensity = 1;
-      pixel.intensity++;
+      try {
+        if (!pixel.intensity) pixel.intensity = 1;
+        pixel.intensity++;
 
-      if (pixel.intensity > 80) {
-        pixel.color = "#fff2aa";
-      } else if (pixel.intensity > 30) {
-        pixel.color = "#ff7700";
-      } else {
-        pixel.color = "#ff2200";
-      }
+        if (pixel.intensity > 80) {
+          pixel.color = "#fff2aa";
+        } else if (pixel.intensity > 30) {
+          pixel.color = "#ff7700";
+        } else {
+          pixel.color = "#ff2200";
+        }
 
-      for (let x = -4; x <= 4; x++) {
-        for (let y = -3; y <= 3; y++) {
-          if (pixelExists(pixel.x + x, pixel.y + y)) {
-            let near = getPixel(pixel.x + x, pixel.y + y);
-            if (
-              near.element === "grass" ||
-              near.element === "leaves" ||
-              near.element === "plant" ||
-              near.element === "dry_vegetation"
-            ) {
-              if (Math.random() < 0.03) near.element = "fire";
+        for (let x = -4; x <= 4; x++) {
+          for (let y = -3; y <= 3; y++) {
+            if (pixelExists(pixel.x + x, pixel.y + y)) {
+              let near = getPixel(pixel.x + x, pixel.y + y);
+              if (
+                near.element === "grass" ||
+                near.element === "leaves" ||
+                near.element === "plant" ||
+                near.element === "dry_vegetation"
+              ) {
+                if (Math.random() < 0.03) near.element = "fire";
+              }
             }
           }
         }
-      }
 
-      if (Math.random() < 0.4) {
-        safeCreatePixel("smoke", pixel.x, pixel.y - 1);
-      }
+        if (Math.random() < 0.4) {
+          safeCreatePixel("smoke", pixel.x, pixel.y - 1);
+        }
 
-      if (pixel.intensity > 50 && Math.random() < 0.05) {
-        let ex = pixel.x + (Math.random() < 0.5 ? -1 : 1) * Math.floor(Math.random() * 15);
-        let ey = pixel.y - Math.floor(Math.random() * 5);
-        if (pixelExists(ex, ey)) {
-          if (getPixel(ex, ey).element === "grass") {
-            getPixel(ex, ey).element = "fire";
+        if (pixel.intensity > 50 && Math.random() < 0.05) {
+          let ex = pixel.x + (Math.random() < 0.5 ? -1 : 1) * Math.floor(Math.random() * 15);
+          let ey = pixel.y - Math.floor(Math.random() * 5);
+          if (pixelExists(ex, ey)) {
+            if (getPixel(ex, ey).element === "grass") {
+              getPixel(ex, ey).element = "fire";
+            }
           }
         }
+      } catch (e) {
+        console.log("Wildfire mod: fire effect skipped a tick (" + e.message + ")");
       }
 
+      // This always runs, even if something above failed, so fire
+      // never stops behaving like normal fire
       if (baseFireTick) baseFireTick.call(elements.fire, pixel);
     };
   }
@@ -558,19 +564,24 @@ runAfterLoad(function () {
     if (elements[mat]) {
       let baseTick = elements[mat].tick;
       elements[mat].tick = function (pixel) {
-        if (pixel.temp && pixel.temp > 250) {
-          heatDamage(pixel, 1);
+        let collapsed = false;
+        try {
+          if (pixel.temp && pixel.temp > 250) {
+            heatDamage(pixel, 1);
+          }
+          if (!pixel.damage) pixel.damage = 0;
+          if (
+            pixel.damage > 60 &&
+            !pixelExists(pixel.x, pixel.y + 1) &&
+            Math.random() < 0.25
+          ) {
+            pixel.element = "dust";
+            collapsed = true;
+          }
+        } catch (e) {
+          console.log("Wildfire mod: structural damage skipped a tick (" + e.message + ")");
         }
-        if (!pixel.damage) pixel.damage = 0;
-        if (
-          pixel.damage > 60 &&
-          !pixelExists(pixel.x, pixel.y + 1) &&
-          Math.random() < 0.25
-        ) {
-          pixel.element = "dust";
-          return;
-        }
-        if (baseTick) baseTick.call(elements[mat], pixel);
+        if (!collapsed && baseTick) baseTick.call(elements[mat], pixel);
       };
     }
   });
@@ -580,26 +591,30 @@ runAfterLoad(function () {
   if (elements.water) {
     let baseWaterTick = elements.water.tick;
     elements.water.tick = function (pixel) {
-      let depth = 0;
-      for (let d = 1; d <= 15; d++) {
-        if (
-          pixelExists(pixel.x, pixel.y - d) &&
-          getPixel(pixel.x, pixel.y - d).element === "water"
-        ) {
-          depth++;
-        } else {
-          break;
+      try {
+        let depth = 0;
+        for (let d = 1; d <= 15; d++) {
+          if (
+            pixelExists(pixel.x, pixel.y - d) &&
+            getPixel(pixel.x, pixel.y - d).element === "water"
+          ) {
+            depth++;
+          } else {
+            break;
+          }
         }
-      }
-      if (depth > 3) {
-        let dir = Math.random() < 0.5 ? -1 : 1;
-        if (
-          pixelExists(pixel.x + dir, pixel.y) &&
-          getPixel(pixel.x + dir, pixel.y).element === "air" &&
-          Math.random() < 0.3
-        ) {
-          pixel.x += dir;
+        if (depth > 3) {
+          let dir = Math.random() < 0.5 ? -1 : 1;
+          if (
+            pixelExists(pixel.x + dir, pixel.y) &&
+            getPixel(pixel.x + dir, pixel.y).element === "air" &&
+            Math.random() < 0.3
+          ) {
+            pixel.x += dir;
+          }
         }
+      } catch (e) {
+        console.log("Wildfire mod: water pressure skipped a tick (" + e.message + ")");
       }
       if (baseWaterTick) baseWaterTick.call(elements.water, pixel);
     };
@@ -617,49 +632,55 @@ runAfterLoad(function () {
     let baseTick = elements[id].tick;
 
     elements[id].tick = function (pixel) {
-      let nearFire = false;
-      for (let x = -1; x <= 1; x++) {
-        for (let y = -1; y <= 1; y++) {
-          if (pixelExists(pixel.x + x, pixel.y + y)) {
-            if (getPixel(pixel.x + x, pixel.y + y).element === "fire") {
-              nearFire = true;
+      let converted = false;
+      try {
+        let nearFire = false;
+        for (let x = -1; x <= 1; x++) {
+          for (let y = -1; y <= 1; y++) {
+            if (pixelExists(pixel.x + x, pixel.y + y)) {
+              if (getPixel(pixel.x + x, pixel.y + y).element === "fire") {
+                nearFire = true;
+              }
             }
           }
         }
-      }
 
-      if (nearFire || pixel.charProgress) {
-        if (!pixel.charProgress) pixel.charProgress = 0;
-        pixel.charProgress += 1;
+        if (nearFire || pixel.charProgress) {
+          if (!pixel.charProgress) pixel.charProgress = 0;
+          pixel.charProgress += 1;
 
-        // Darken the color gradually from its normal shade toward black
-        // as charProgress climbs, so it visibly chars over time instead
-        // of flipping the instant it's "done"
-        let percent = Math.min(1, pixel.charProgress / charTicks);
-        let r = parseInt(baseColor.substr(1, 2), 16);
-        let g = parseInt(baseColor.substr(3, 2), 16);
-        let b = parseInt(baseColor.substr(5, 2), 16);
-        r = Math.round(r * (1 - percent));
-        g = Math.round(g * (1 - percent));
-        b = Math.round(b * (1 - percent));
-        pixel.color =
-          "#" +
-          r.toString(16).padStart(2, "0") +
-          g.toString(16).padStart(2, "0") +
-          b.toString(16).padStart(2, "0");
+          // Darken the color gradually from its normal shade toward black
+          // as charProgress climbs, so it visibly chars over time instead
+          // of flipping the instant it's "done"
+          let percent = Math.min(1, pixel.charProgress / charTicks);
+          let r = parseInt(baseColor.substr(1, 2), 16);
+          let g = parseInt(baseColor.substr(3, 2), 16);
+          let b = parseInt(baseColor.substr(5, 2), 16);
+          r = Math.round(r * (1 - percent));
+          g = Math.round(g * (1 - percent));
+          b = Math.round(b * (1 - percent));
+          pixel.color =
+            "#" +
+            r.toString(16).padStart(2, "0") +
+            g.toString(16).padStart(2, "0") +
+            b.toString(16).padStart(2, "0");
 
-        // Fully charred: becomes charcoal (if it exists), otherwise ash
-        if (pixel.charProgress >= charTicks) {
-          if (elements.charcoal) {
-            pixel.element = "charcoal";
-          } else if (elements.ash) {
-            pixel.element = "ash";
+          // Fully charred: becomes charcoal (if it exists), otherwise ash
+          if (pixel.charProgress >= charTicks) {
+            if (elements.charcoal) {
+              pixel.element = "charcoal";
+              converted = true;
+            } else if (elements.ash) {
+              pixel.element = "ash";
+              converted = true;
+            }
           }
-          return;
         }
+      } catch (e) {
+        console.log("Wildfire mod: charring skipped a tick (" + e.message + ")");
       }
 
-      if (baseTick) baseTick.call(elements[id], pixel);
+      if (!converted && baseTick) baseTick.call(elements[id], pixel);
     };
   }
 
