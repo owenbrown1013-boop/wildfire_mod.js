@@ -537,17 +537,24 @@ runAfterLoad(function () {
           pixel.color = "#ff2200";
         }
 
-        for (let x = -4; x <= 4; x++) {
-          for (let y = -3; y <= 3; y++) {
-            if (pixelExists(pixel.x + x, pixel.y + y)) {
-              let near = getPixel(pixel.x + x, pixel.y + y);
-              if (
-                near.element === "grass" ||
-                near.element === "leaves" ||
-                near.element === "plant" ||
-                near.element === "dry_vegetation"
-              ) {
-                if (Math.random() < 0.03) near.element = "fire";
+        // Only scan for nearby fuel some of the time, not every single
+        // tick - this is the most expensive part of fire's tick, and
+        // with dozens of fire pixels burning at once (a real blaze),
+        // running it constantly adds up fast. Spread still happens at
+        // essentially the same visible rate.
+        if (Math.random() < 0.35) {
+          for (let x = -4; x <= 4; x++) {
+            for (let y = -3; y <= 3; y++) {
+              if (pixelExists(pixel.x + x, pixel.y + y)) {
+                let near = getPixel(pixel.x + x, pixel.y + y);
+                if (
+                  near.element === "grass" ||
+                  near.element === "leaves" ||
+                  near.element === "plant" ||
+                  near.element === "dry_vegetation"
+                ) {
+                  if (Math.random() < 0.08) near.element = "fire";
+                }
               }
             }
           }
