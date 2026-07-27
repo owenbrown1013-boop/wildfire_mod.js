@@ -329,6 +329,11 @@ runAfterLoad(function () {
 
       if (pixel.state === "seeking_fire") {
         if (!pixel.targetX || pixel.retarget) {
+          if (pixel.searchCooldown > 0) {
+            pixel.searchCooldown--;
+            return;
+          }
+          pixel.searchCooldown = 15;
           let t = findNearestElement(pixel.x, pixel.y, "fire", 70);
           pixel.retarget = false;
           if (!t) {
@@ -352,6 +357,11 @@ runAfterLoad(function () {
         }
       } else if (pixel.state === "seeking_water") {
         if (!pixel.targetX) {
+          if (pixel.searchCooldown > 0) {
+            pixel.searchCooldown--;
+            return;
+          }
+          pixel.searchCooldown = 15;
           let t = findNearestElement(pixel.x, pixel.y, "water", 90);
           if (!t) {
             // no water source anywhere nearby - refill anyway so it
@@ -399,6 +409,11 @@ runAfterLoad(function () {
 
       if (pixel.state === "seeking_fire") {
         if (!pixel.targetX || pixel.retarget) {
+          if (pixel.searchCooldown > 0) {
+            pixel.searchCooldown--;
+            return;
+          }
+          pixel.searchCooldown = 15;
           let t = findNearestElement(pixel.x, pixel.y, "fire", 90);
           pixel.retarget = false;
           if (!t) {
@@ -422,6 +437,11 @@ runAfterLoad(function () {
         }
       } else if (pixel.state === "seeking_water") {
         if (!pixel.targetX) {
+          if (pixel.searchCooldown > 0) {
+            pixel.searchCooldown--;
+            return;
+          }
+          pixel.searchCooldown = 15;
           let t = findNearestElement(pixel.x, pixel.y, "water", 110);
           if (!t) {
             pixel.tank = 25;
@@ -466,10 +486,16 @@ runAfterLoad(function () {
 
       if (pixel.state === "seeking_fire") {
         if (!pixel.targetX || pixel.retarget) {
+          if (pixel.searchCooldown > 0) {
+            pixel.searchCooldown--;
+            return;
+          }
+          pixel.searchCooldown = 20;
           let t = findNearestElement(pixel.x, pixel.y, "fire", 90);
           pixel.retarget = false;
           if (!t) {
-            // no fire right now - hover in place and keep checking
+            // no fire right now - wait a bit before checking again,
+            // instead of scanning every single tick
             return;
           }
           pixel.targetX = t.x;
